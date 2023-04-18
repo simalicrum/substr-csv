@@ -60,59 +60,41 @@ console.log(
 );
 
 const appendFile = util.promisify(fs.appendFile);
+const readFile = util.promisify(fs.readFile);
 
 fs.writeFileSync(options.csvOutputFile, "");
 
 const glob = new Glob(options.csvInputFiles, { nodir: true });
 let foundcount = 0;
-let threadnum = 0;
 let cpus = os.cpus().length;
-let threads = Array(cpus).fill([]);
 let promises = [];
 for await (const filename of glob) {
   spinner.start(`Searching ${filename}`);
-  await new Promise((resolve, reject) => {
-    const file = fs.createReadStream(filename);
-    Papa.parse(file, {
-      worker: true,
-      header: true,
-      skipEmptyLines: true,
-      download: true,
-      complete: () => {
-        spinner.suffixText = "";
-        spinner.succeed();
-        resolve();
-      },
-      step: (row) => {
-        threads[threadnum++].push(row);
-        if (threadnum === cpus) {
-          threadnum = 0;
-        }
-      },
-      error: (error) => {
-        console.log("error: ", error);
-        reject(error);
-      },
-    });
+  const csv = await readFile(filename, "utf8");
+  const rows = Papa.parse(csv, {
+    header: true,
+    skipEmptyLines: true,
   });
-  for (const thread of threads) {
-    const promise = piscina.run({
-      searchTerms: searchTerms.data,
-      column: options.column,
-      rows: thread,
+  const promise = piscina.run({
+    searchTerms: searchTerms.data,
+    column: options.column,
+    rows: rows.data,
+  });
+  promises.push(promise);
+  if (promises.length >= cpus) {
+    const found = await Promise.all(promises);
+    found.forEach((chunk) => {
+      foundcount += chunk.length;
+      if (chunk.length > 0) {
+        const str = Papa.unparse(chunk);
+        appendFile(options.csvOutputFile, str);
+      }
     });
-    promises.push(promise);
+    promises = [];
   }
-  const foundChunks = await Promise.all(promises);
-  const found = foundChunks.flat();
-  foundcount += found.length;
-  threads = Array(cpus).fill([]);
-  promises = [];
-  const str = Papa.unparse(found, { header: false });
-  appendFile(options.csvOutputFile, str, "utf8");
   if (foundcount) {
-    spinner.suffixText = chalk.dim(`${foundcount} matches found`);
+    spinner.suffixText = chalk.dim(`Found ${foundcount} matches`);
   }
+  spinner.succeed();
 }
-
 console.log("Done");
