@@ -9,7 +9,6 @@ import { Piscina } from "piscina";
 import os from "os";
 
 const piscina = new Piscina({
-  // The URL must be a file:// URL
   filename: new URL("./search.mjs", import.meta.url).href,
 });
 
